@@ -10,10 +10,20 @@ const mockMavenClient = {
   },
 };
 
+// Fast retry config for tests (1ms delays)
+const fastRetryConfig = {
+  retryConfig: {
+    initialDelayMs: 1,
+    backoffMultiplier: 1,
+  },
+};
+
 describe("MavenUploader", () => {
   beforeEach(() => {
     mockCreateKnowledgeDocument.mockReset();
     vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   const createTestDoc = (id: string): MavenKnowledgeDocument => ({
@@ -28,7 +38,7 @@ describe("MavenUploader", () => {
     it("should upload single document successfully", async () => {
       mockCreateKnowledgeDocument.mockResolvedValueOnce({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const docs = [createTestDoc("doc-1")];
 
       const result = await uploader.upload(docs);
@@ -41,7 +51,7 @@ describe("MavenUploader", () => {
     it("should upload documents in chunks of 50", async () => {
       mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       // Create 120 docs (should be 3 chunks: 50, 50, 20)
       const docs = Array.from({ length: 120 }, (_, i) =>
         createTestDoc(`doc-${i}`)
@@ -55,7 +65,7 @@ describe("MavenUploader", () => {
     });
 
     it("should handle empty document array", async () => {
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
 
       const result = await uploader.upload([]);
 
@@ -65,12 +75,15 @@ describe("MavenUploader", () => {
     });
 
     it("should return failure count for failed uploads", async () => {
+      // With retry enabled (3 attempts), doc-2 must fail 3 times to be marked failed
       mockCreateKnowledgeDocument
-        .mockResolvedValueOnce({ success: true })
-        .mockRejectedValueOnce(new Error("Upload failed"))
-        .mockResolvedValueOnce({ success: true });
+        .mockResolvedValueOnce({ success: true }) // doc-1 succeeds
+        .mockRejectedValueOnce(new Error("Upload failed")) // doc-2 attempt 1
+        .mockRejectedValueOnce(new Error("Upload failed")) // doc-2 attempt 2
+        .mockRejectedValueOnce(new Error("Upload failed")) // doc-2 attempt 3 - permanently fails
+        .mockResolvedValueOnce({ success: true }); // doc-3 succeeds
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const docs = [
         createTestDoc("doc-1"),
         createTestDoc("doc-2"),
@@ -86,12 +99,15 @@ describe("MavenUploader", () => {
     });
 
     it("should continue processing after individual doc failure", async () => {
+      // With retry enabled (3 attempts), doc-1 must fail 3 times
       mockCreateKnowledgeDocument
-        .mockRejectedValueOnce(new Error("First failed"))
-        .mockResolvedValueOnce({ success: true })
-        .mockResolvedValueOnce({ success: true });
+        .mockRejectedValueOnce(new Error("First failed")) // doc-1 attempt 1
+        .mockRejectedValueOnce(new Error("First failed")) // doc-1 attempt 2
+        .mockRejectedValueOnce(new Error("First failed")) // doc-1 attempt 3 - permanently fails
+        .mockResolvedValueOnce({ success: true }) // doc-2 succeeds
+        .mockResolvedValueOnce({ success: true }); // doc-3 succeeds
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const docs = [
         createTestDoc("doc-1"),
         createTestDoc("doc-2"),
@@ -100,8 +116,8 @@ describe("MavenUploader", () => {
 
       const result = await uploader.upload(docs);
 
-      // Should have processed all 3, even though first failed
-      expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(3);
+      // Should have processed all 3 docs (with 3 attempts for doc-1 + 1 each for doc-2,3 = 5 total calls)
+      expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(5);
       expect(result.success).toBe(2);
       expect(result.failed).toBe(1);
     });
@@ -110,7 +126,7 @@ describe("MavenUploader", () => {
       const consoleSpy = vi.spyOn(console, "log");
       mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       // Create 75 docs (2 chunks: 50, 25)
       const docs = Array.from({ length: 75 }, (_, i) =>
         createTestDoc(`doc-${i}`)
@@ -130,7 +146,7 @@ describe("MavenUploader", () => {
     it("should handle exactly 50 documents (one chunk)", async () => {
       mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const docs = Array.from({ length: 50 }, (_, i) =>
         createTestDoc(`doc-${i}`)
       );
@@ -144,7 +160,7 @@ describe("MavenUploader", () => {
     it("should pass correct parameters to Maven SDK", async () => {
       mockCreateKnowledgeDocument.mockResolvedValueOnce({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const doc = createTestDoc("doc-1");
 
       await uploader.upload([doc]);
@@ -159,13 +175,30 @@ describe("MavenUploader", () => {
         })
       );
     });
+
+    it("should retry transient failures and succeed", async () => {
+      // Fail twice, then succeed on third attempt
+      mockCreateKnowledgeDocument
+        .mockRejectedValueOnce(new Error("Transient error"))
+        .mockRejectedValueOnce(new Error("Transient error"))
+        .mockResolvedValueOnce({ success: true });
+
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
+      const docs = [createTestDoc("doc-1")];
+
+      const result = await uploader.upload(docs);
+
+      expect(result.success).toBe(1);
+      expect(result.failed).toBe(0);
+      expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe("uploadResult", () => {
     it("should include total count in result", async () => {
       mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
-      const uploader = new MavenUploader(mockMavenClient as any, "kb-1");
+      const uploader = new MavenUploader(mockMavenClient as any, "kb-1", fastRetryConfig);
       const docs = Array.from({ length: 10 }, (_, i) =>
         createTestDoc(`doc-${i}`)
       );

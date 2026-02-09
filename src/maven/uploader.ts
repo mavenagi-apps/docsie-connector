@@ -2,10 +2,12 @@
  * Maven Knowledge Document Uploader
  *
  * Uploads documents to Maven in chunks with progress logging.
+ * Includes retry logic with exponential backoff for transient failures.
  */
 
 import type { MavenAGIClient } from "mavenagi";
 import type { MavenKnowledgeDocument } from "./transform.js";
+import { withRetry, type RetryConfig } from "../utils/retry.js";
 
 const DEFAULT_CHUNK_SIZE = 50;
 
@@ -21,19 +23,27 @@ export interface UploadResult {
   errors: UploadError[];
 }
 
+export interface UploaderConfig {
+  chunkSize?: number;
+  /** Override retry config for testing */
+  retryConfig?: Partial<Omit<RetryConfig, "context">>;
+}
+
 export class MavenUploader {
   private readonly client: MavenAGIClient;
   private readonly knowledgeBaseId: string;
   private readonly chunkSize: number;
+  private readonly retryConfig: Partial<Omit<RetryConfig, "context">>;
 
   constructor(
     client: MavenAGIClient,
     knowledgeBaseId: string,
-    chunkSize: number = DEFAULT_CHUNK_SIZE
+    config: UploaderConfig = {}
   ) {
     this.client = client;
     this.knowledgeBaseId = knowledgeBaseId;
-    this.chunkSize = chunkSize;
+    this.chunkSize = config.chunkSize ?? DEFAULT_CHUNK_SIZE;
+    this.retryConfig = config.retryConfig ?? {};
   }
 
   /**
@@ -62,28 +72,42 @@ export class MavenUploader {
         `Chunk ${chunkNum}/${chunks.length}: Uploading ${chunk.length} documents...`
       );
 
-      // Process each document in the chunk
+      // Process each document in the chunk with retry
       for (const doc of chunk) {
         try {
-          await this.client.knowledge.createKnowledgeDocument(
-            this.knowledgeBaseId,
+          await withRetry(
+            () =>
+              this.client.knowledge.createKnowledgeDocument(
+                this.knowledgeBaseId,
+                {
+                  knowledgeDocumentId: doc.knowledgeDocumentId,
+                  contentType: doc.contentType,
+                  title: doc.title,
+                  content: doc.content,
+                  metadata: doc.metadata,
+                  createdAt: doc.createdAt,
+                  updatedAt: doc.updatedAt,
+                }
+              ),
             {
-              knowledgeDocumentId: doc.knowledgeDocumentId,
-              contentType: doc.contentType,
-              title: doc.title,
-              content: doc.content,
-              metadata: doc.metadata,
-              createdAt: doc.createdAt,
-              updatedAt: doc.updatedAt,
+              context: `upload ${doc.knowledgeDocumentId.referenceId}`,
+              maxRetries: this.retryConfig.maxRetries ?? 3,
+              initialDelayMs: this.retryConfig.initialDelayMs ?? 1000,
+              backoffMultiplier: this.retryConfig.backoffMultiplier ?? 2,
             }
           );
           result.success++;
         } catch (error) {
+          // Failed after all retries
           result.failed++;
           result.errors.push({
             docId: doc.knowledgeDocumentId.referenceId,
             error: error instanceof Error ? error.message : String(error),
           });
+          console.error(
+            `[upload ${doc.knowledgeDocumentId.referenceId}] permanently failed:`,
+            error instanceof Error ? error.message : String(error)
+          );
         }
       }
 
