@@ -343,4 +343,67 @@ describe("DocsieClient", () => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe("rate limiting", () => {
+    it("should apply rate limiting to requests", async () => {
+      // Make 3 rapid requests and verify they're spaced out
+      const timestamps: number[] = [];
+
+      mockFetch.mockImplementation(async () => {
+        timestamps.push(Date.now());
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: [] }),
+        };
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+
+      // Execute 3 requests concurrently
+      await Promise.all([
+        client.get("/test1"),
+        client.get("/test2"),
+        client.get("/test3"),
+      ]);
+
+      expect(timestamps).toHaveLength(3);
+
+      // With rate limiting (200ms minTime), sequential requests should have delays
+      // First request is immediate, subsequent ones should be delayed
+      if (timestamps.length >= 2) {
+        const delay1 = timestamps[1] - timestamps[0];
+        // Allow some tolerance (150ms minimum to account for test execution time)
+        expect(delay1).toBeGreaterThanOrEqual(150);
+      }
+    });
+
+    it("should limit concurrent requests to 5", async () => {
+      let concurrentCount = 0;
+      let maxConcurrent = 0;
+
+      mockFetch.mockImplementation(async () => {
+        concurrentCount++;
+        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
+
+        // Simulate network delay
+        await new Promise((resolve) => setTimeout(resolve, 50));
+
+        concurrentCount--;
+        return {
+          ok: true,
+          json: () => Promise.resolve({ data: [] }),
+        };
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+
+      // Fire 10 requests simultaneously
+      await Promise.all(
+        Array.from({ length: 10 }, (_, i) => client.get(`/test${i}`))
+      );
+
+      // Should never exceed 5 concurrent requests
+      expect(maxConcurrent).toBeLessThanOrEqual(5);
+    });
+  });
 });

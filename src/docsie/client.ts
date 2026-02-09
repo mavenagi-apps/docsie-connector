@@ -4,6 +4,7 @@
  * Handles authentication and HTTP requests to the Docsie API.
  */
 
+import Bottleneck from "bottleneck";
 import type {
   DocsieWorkspace,
   DocsieProject,
@@ -14,13 +15,20 @@ import type {
 export interface DocsieClientConfig {
   apiKey: string;
   baseUrl?: string;
+  /** Max concurrent requests (default: 5) */
+  maxConcurrent?: number;
+  /** Min time between requests in ms (default: 200) */
+  minTime?: number;
 }
 
 const DEFAULT_BASE_URL = "https://app.docsie.io/api/v1";
+const DEFAULT_MAX_CONCURRENT = 5;
+const DEFAULT_MIN_TIME = 200;
 
 export class DocsieClient {
   readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly limiter: Bottleneck;
 
   constructor(config: DocsieClientConfig) {
     if (!config.apiKey) {
@@ -29,12 +37,25 @@ export class DocsieClient {
 
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
+
+    // Configure rate limiter per KB best practices
+    this.limiter = new Bottleneck({
+      maxConcurrent: config.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+      minTime: config.minTime ?? DEFAULT_MIN_TIME,
+    });
   }
 
   /**
-   * Make a GET request to the Docsie API
+   * Make a GET request to the Docsie API (rate limited)
    */
   async get<T>(endpoint: string): Promise<T> {
+    return this.limiter.schedule(() => this.fetchWithAuth<T>(endpoint));
+  }
+
+  /**
+   * Internal fetch with authentication (not rate limited)
+   */
+  private async fetchWithAuth<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
     const response = await fetch(url, {
