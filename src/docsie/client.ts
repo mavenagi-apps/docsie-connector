@@ -4,6 +4,13 @@
  * Handles authentication and HTTP requests to the Docsie API.
  */
 
+import type {
+  DocsieWorkspace,
+  DocsieProject,
+  DocsieDocument,
+  DocsieDocumentFull,
+} from "./types.js";
+
 export interface DocsieClientConfig {
   apiKey: string;
   baseUrl?: string;
@@ -79,5 +86,35 @@ export class DocsieClient {
     }
 
     return allItems;
+  }
+
+  /**
+   * Fetch all workspaces
+   */
+  async getWorkspaces(): Promise<DocsieWorkspace[]> {
+    return this.get<DocsieWorkspace[]>("/workspaces");
+  }
+
+  /**
+   * Fetch projects for a workspace
+   */
+  async getProjects(workspaceId: string): Promise<DocsieProject[]> {
+    return this.get<DocsieProject[]>(`/workspaces/${workspaceId}/projects`);
+  }
+
+  /**
+   * Fetch all documents for a workspace (with pagination)
+   */
+  async getDocuments(workspaceId: string): Promise<DocsieDocument[]> {
+    return this.fetchAllWithPagination<DocsieDocument>(
+      `/workspaces/${workspaceId}/documents`
+    );
+  }
+
+  /**
+   * Fetch a single document with full content
+   */
+  async getDocument(documentId: string): Promise<DocsieDocumentFull> {
+    return this.get<DocsieDocumentFull>(`/documents/${documentId}`);
   }
 }

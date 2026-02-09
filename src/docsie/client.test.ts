@@ -230,4 +230,117 @@ describe("DocsieClient", () => {
       consoleSpy.mockRestore();
     });
   });
+
+  describe("document fetching", () => {
+    it("should fetch workspaces", async () => {
+      const mockWorkspaces = [
+        { id: "ws-1", name: "Workspace 1" },
+        { id: "ws-2", name: "Workspace 2" },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockWorkspaces),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getWorkspaces();
+
+      expect(result).toEqual(mockWorkspaces);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/workspaces"),
+        expect.any(Object)
+      );
+    });
+
+    it("should fetch projects for a workspace", async () => {
+      const mockProjects = [
+        { id: "proj-1", workspace_id: "ws-1", name: "Project 1" },
+        { id: "proj-2", workspace_id: "ws-1", name: "Project 2" },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockProjects),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getProjects("ws-1");
+
+      expect(result).toEqual(mockProjects);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/workspaces/ws-1/projects"),
+        expect.any(Object)
+      );
+    });
+
+    it("should fetch documents for a workspace", async () => {
+      const mockDocs = [
+        { id: "doc-1", title: "Doc 1" },
+        { id: "doc-2", title: "Doc 2" },
+      ];
+      // Simulate pagination response (single page)
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockDocs),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getDocuments("ws-1");
+
+      expect(result).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/workspaces/ws-1/documents"),
+        expect.any(Object)
+      );
+    });
+
+    it("should fetch a single document with full content", async () => {
+      const mockDoc = {
+        id: "doc-1",
+        title: "Full Document",
+        content: "# Heading\n\nThis is the full content.",
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockDoc),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getDocument("doc-1");
+
+      expect(result).toEqual(mockDoc);
+      expect(result.content).toBeDefined();
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/documents/doc-1"),
+        expect.any(Object)
+      );
+    });
+
+    it("should use pagination when fetching documents", async () => {
+      // 150 docs across 2 pages
+      const page1 = Array.from({ length: 100 }, (_, i) => ({
+        id: `doc-${i}`,
+        title: `Doc ${i}`,
+      }));
+      const page2 = Array.from({ length: 50 }, (_, i) => ({
+        id: `doc-${i + 100}`,
+        title: `Doc ${i + 100}`,
+      }));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(page1),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(page2),
+        });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getDocuments("ws-1");
+
+      expect(result).toHaveLength(150);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+  });
 });
