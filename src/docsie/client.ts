@@ -46,4 +46,38 @@ export class DocsieClient {
 
     return response.json() as Promise<T>;
   }
+
+  /**
+   * Fetch all items from a paginated endpoint
+   *
+   * Follows KB best practices: continues fetching until results < per_page
+   */
+  async fetchAllWithPagination<T>(
+    endpoint: string,
+    perPage: number = 100
+  ): Promise<T[]> {
+    const allItems: T[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const separator = endpoint.includes("?") ? "&" : "?";
+      const paginatedEndpoint = `${endpoint}${separator}page=${page}&per_page=${perPage}`;
+
+      const items = await this.get<T[]>(paginatedEndpoint);
+
+      console.log(`Page ${page}: fetched ${items.length} items`);
+
+      allItems.push(...items);
+
+      // Stop when we get fewer results than requested (no more pages)
+      if (items.length < perPage) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    return allItems;
+  }
 }
