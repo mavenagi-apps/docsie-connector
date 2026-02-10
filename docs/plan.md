@@ -152,14 +152,16 @@
 
 ## Epic 5: Testing & Documentation
 
-### E5-S1: Write Unit Tests
+### E5-S1: Write Unit Tests ✅
 **Size**: M
+**Status**: Complete (2025-02-10)
+**Commit**: `684e220`
 **Description**: Test coverage for all modules
 **Acceptance Criteria**:
-- [ ] DocsieClient tests
-- [ ] Transform tests
-- [ ] Sync orchestration tests
-- [ ] >80% coverage
+- [x] DocsieClient tests (20 tests, 100% coverage)
+- [x] Transform tests (16 tests, 100% coverage)
+- [x] Sync orchestration tests (8 tests, 98% coverage)
+- [x] >80% coverage (90.19% overall)
 
 ### E5-S2: Write Integration Test
 **Size**: S
