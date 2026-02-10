@@ -125,15 +125,17 @@
 - [x] Returns SyncResult with counts
 - [x] Test: End-to-end with mocks
 
-### E4-S2: Add Validation Script
+### E4-S2: Add Validation Script ✅
 **Size**: S
+**Status**: Complete (2025-02-10)
+**Commit**: `8495899`
 **Description**: Pre-sync validation (from existing script)
 **Acceptance Criteria**:
-- [ ] validate.ts script
-- [ ] Tests auth + counts resources
-- [ ] Compares to expected counts
-- [ ] Reports missing permissions
-- [ ] Run before first sync
+- [x] validate.ts script
+- [x] Tests auth + counts resources
+- [x] Compares to expected counts
+- [x] Reports missing permissions
+- [x] Run before first sync
 
 ### E4-S3: Create CLI Entry Point
 **Size**: XS
