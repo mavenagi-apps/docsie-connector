@@ -163,14 +163,16 @@
 - [x] Sync orchestration tests (8 tests, 98% coverage)
 - [x] >80% coverage (90.19% overall)
 
-### E5-S2: Write Integration Test
+### E5-S2: Write Integration Test ✅
 **Size**: S
+**Status**: Complete (2025-02-10)
+**Commit**: `a549e07`
 **Description**: End-to-end test with test fixtures
 **Acceptance Criteria**:
-- [ ] Mock Docsie API responses
-- [ ] Mock Maven SDK
-- [ ] Verifies 108-doc sync
-- [ ] Runs in CI
+- [x] Mock Docsie API responses
+- [x] Mock Maven SDK
+- [x] Verifies 108-doc sync
+- [x] Runs in CI (all mocked, no external deps)
 
 ### E5-S3: Final Documentation
 **Size**: XS
