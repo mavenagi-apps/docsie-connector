@@ -137,14 +137,16 @@
 - [x] Reports missing permissions
 - [x] Run before first sync
 
-### E4-S3: Create CLI Entry Point
+### E4-S3: Create CLI Entry Point ✅
 **Size**: XS
+**Status**: Complete (2025-02-10)
+**Commit**: `db5afeb`
 **Description**: CLI for running sync
 **Acceptance Criteria**:
-- [ ] index.ts with env validation
-- [ ] Runs sync with error handling
-- [ ] Exits with proper codes
-- [ ] Clear console output
+- [x] index.ts with env validation
+- [x] Runs sync with error handling
+- [x] Exits with proper codes
+- [x] Clear console output
 
 ---
 
