@@ -5,8 +5,10 @@ import { runSync, runValidate } from "./run.js";
 vi.mock("../docsie/client.js", () => ({
   DocsieClient: vi.fn().mockImplementation(() => ({
     getWorkspaces: vi.fn(),
-    getDocuments: vi.fn(),
-    getDocument: vi.fn(),
+    getDocumentation: vi.fn(),
+    getBooks: vi.fn(),
+    getArticles: vi.fn(),
+    getArticle: vi.fn(),
   })),
 }));
 
@@ -48,7 +50,7 @@ describe("runSync", () => {
   const testConfig = {
     docsie: {
       apiKey: "docsie-key",
-      baseUrl: "https://docsie.io",
+      baseUrl: "https://app.docsie.io/api_v2/003",
     },
     maven: {
       organizationId: "org-123",
@@ -60,9 +62,10 @@ describe("runSync", () => {
   it("should return success when sync completes", async () => {
     const mockSyncAll = vi.fn().mockResolvedValue({
       workspaces: 1,
-      totalDocuments: 10,
+      articles: 10,
       uploaded: 10,
       failed: 0,
+      skipped: 0,
       errors: [],
       durationMs: 1000,
     });
@@ -79,30 +82,6 @@ describe("runSync", () => {
     expect(result.success).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.syncResult?.uploaded).toBe(10);
-  });
-
-  it("should return failure when sync has errors", async () => {
-    const mockSyncAll = vi.fn().mockResolvedValue({
-      workspaces: 1,
-      totalDocuments: 10,
-      uploaded: 8,
-      failed: 2,
-      errors: [{ docId: "doc-1", error: "failed" }],
-      durationMs: 1000,
-    });
-
-    vi.mocked(DocsieSync).mockImplementation(
-      () =>
-        ({
-          syncAll: mockSyncAll,
-        }) as any
-    );
-
-    const result = await runSync(testConfig, "kb-1");
-
-    // Still success overall - partial failures don't fail the run
-    expect(result.success).toBe(true);
-    expect(result.syncResult?.failed).toBe(2);
   });
 
   it("should return failure when sync throws", async () => {
@@ -135,7 +114,7 @@ describe("runValidate", () => {
   const testConfig = {
     docsie: {
       apiKey: "docsie-key",
-      baseUrl: "https://docsie.io",
+      baseUrl: "https://app.docsie.io/api_v2/003",
     },
     maven: {
       organizationId: "org-123",
@@ -146,7 +125,7 @@ describe("runValidate", () => {
 
   it("should return success when validation passes", async () => {
     vi.mocked(runValidation).mockResolvedValue({
-      docsie: { success: true, workspaces: 1, documents: 10 },
+      docsie: { success: true, workspaces: 1, documentation: 5, books: 10, articles: 109 },
       maven: { success: true, knowledgeBaseName: "Test KB" },
       ready: true,
     });

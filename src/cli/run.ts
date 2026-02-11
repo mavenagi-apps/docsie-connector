@@ -32,7 +32,6 @@ export async function runSync(
   try {
     console.log("=== Docsie to Maven Sync ===\n");
 
-    // Initialize clients
     const docsieClient = new DocsieClient({
       apiKey: config.docsie.apiKey,
       baseUrl: config.docsie.baseUrl,
@@ -45,16 +44,15 @@ export async function runSync(
 
     const uploader = new MavenUploader(mavenClient, knowledgeBaseId);
 
-    // Run sync
     const sync = new DocsieSync(docsieClient, uploader);
     const result = await sync.syncAll();
 
-    // Log summary
     console.log("\n=== Sync Complete ===");
     console.log(`Workspaces: ${result.workspaces}`);
-    console.log(`Documents: ${result.totalDocuments}`);
+    console.log(`Articles: ${result.articles}`);
     console.log(`Uploaded: ${result.uploaded}`);
     console.log(`Failed: ${result.failed}`);
+    console.log(`Skipped: ${result.skipped}`);
     console.log(`Duration: ${result.durationMs}ms`);
 
     if (result.errors.length > 0) {
@@ -87,10 +85,9 @@ export async function runSync(
 export async function runValidate(
   config: Config,
   knowledgeBaseId: string,
-  expectedDocCount?: number
+  expectedArticleCount?: number
 ): Promise<RunResult> {
   try {
-    // Initialize clients
     const docsieClient = new DocsieClient({
       apiKey: config.docsie.apiKey,
       baseUrl: config.docsie.baseUrl,
@@ -101,9 +98,8 @@ export async function runValidate(
       agentId: config.maven.agentId,
     });
 
-    // Run validation
     const result = await runValidation(docsieClient, mavenClient, knowledgeBaseId, {
-      expectedDocumentCount: expectedDocCount,
+      expectedArticleCount,
     });
 
     return {

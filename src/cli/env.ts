@@ -11,7 +11,7 @@ const REQUIRED_ENV_VARS = [
   "MAVEN_API_KEY",
 ] as const;
 
-const DEFAULT_DOCSIE_BASE_URL = "https://app.docsie.io/api/v1";
+const DEFAULT_DOCSIE_BASE_URL = "https://app.docsie.io/api_v2/003";
 
 export interface EnvValidationResult {
   valid: boolean;

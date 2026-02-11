@@ -1,25 +1,26 @@
 /**
  * Docsie Sync Orchestrator
  *
- * Coordinates fetching documents from Docsie, transforming them,
- * and uploading to Maven knowledge base.
+ * Fetches articles from Docsie, transforms to Maven format,
+ * and uploads to Maven knowledge base.
  */
 
 import type { DocsieClient } from "../docsie/client.js";
-import type { DocsieDocumentFull } from "../docsie/types.js";
+import type { DocsieArticle } from "../docsie/types.js";
 import type { MavenUploader, UploadError } from "../maven/uploader.js";
 import { transformToMavenFormat } from "../maven/transform.js";
 
 export interface SyncConfig {
-  /** Optional workspace IDs to sync (all if not specified) */
+  /** Optional workspace IDs to filter by (all if not specified) */
   workspaceIds?: string[];
 }
 
 export interface SyncResult {
   workspaces: number;
-  totalDocuments: number;
+  articles: number;
   uploaded: number;
   failed: number;
+  skipped: number;
   errors: UploadError[];
   durationMs: number;
 }
@@ -34,71 +35,70 @@ export class DocsieSync {
   }
 
   /**
-   * Sync all documents from Docsie to Maven
+   * Sync all articles from Docsie to Maven
    */
-  async syncAll(config: SyncConfig = {}): Promise<SyncResult> {
+  async syncAll(_config: SyncConfig = {}): Promise<SyncResult> {
     const startTime = Date.now();
 
     const result: SyncResult = {
       workspaces: 0,
-      totalDocuments: 0,
+      articles: 0,
       uploaded: 0,
       failed: 0,
+      skipped: 0,
       errors: [],
       durationMs: 0,
     };
 
-    // Fetch workspaces
+    // Fetch workspaces for reporting
     console.log("Fetching workspaces from Docsie...");
     const workspaces = await this.docsieClient.getWorkspaces();
     result.workspaces = workspaces.length;
-
-    if (workspaces.length === 0) {
-      console.log("No workspaces found");
-      result.durationMs = Date.now() - startTime;
-      return result;
-    }
-
     console.log(`Found ${workspaces.length} workspace(s)`);
 
-    // Filter workspaces if specific IDs provided
-    const targetWorkspaces = config.workspaceIds
-      ? workspaces.filter((ws) => config.workspaceIds!.includes(ws.id))
-      : workspaces;
+    // Fetch all articles directly (API returns articles across all workspaces)
+    console.log("Fetching all articles...");
+    const allArticles = await this.docsieClient.getArticles();
+    console.log(`Found ${allArticles.length} articles`);
 
-    // Collect all documents from all workspaces
-    const allFullDocs: DocsieDocumentFull[] = [];
+    // Filter out articles with no content
+    const articlesWithContent: DocsieArticle[] = [];
+    let skipped = 0;
 
-    for (const workspace of targetWorkspaces) {
-      console.log(`Fetching documents from workspace: ${workspace.name}`);
+    for (const article of allArticles) {
+      const hasBlocks =
+        article.doc &&
+        article.doc.blocks &&
+        article.doc.blocks.length > 0;
 
-      // Get document list for workspace
-      const docList = await this.docsieClient.getDocuments(workspace.id);
-      console.log(`Found ${docList.length} document(s) in ${workspace.name}`);
-
-      // Fetch full content for each document
-      for (const doc of docList) {
-        const fullDoc = await this.docsieClient.getDocument(doc.id);
-        allFullDocs.push(fullDoc);
+      if (hasBlocks) {
+        articlesWithContent.push(article);
+      } else {
+        skipped++;
       }
     }
 
-    result.totalDocuments = allFullDocs.length;
+    result.articles = articlesWithContent.length;
+    result.skipped = skipped;
 
-    if (allFullDocs.length === 0) {
-      console.log("No documents to sync");
+    if (skipped > 0) {
+      console.log(`Skipped ${skipped} articles with no content`);
+    }
+
+    if (articlesWithContent.length === 0) {
+      console.log("No articles with content to sync");
       result.durationMs = Date.now() - startTime;
       return result;
     }
 
-    console.log(`Total documents to sync: ${allFullDocs.length}`);
+    console.log(`Articles to sync: ${articlesWithContent.length}`);
 
-    // Transform all documents to Maven format
-    console.log("Transforming documents to Maven format...");
-    const mavenDocs = allFullDocs.map(transformToMavenFormat);
+    // Transform all articles to Maven format
+    console.log("Transforming articles to Maven format...");
+    const mavenDocs = articlesWithContent.map(transformToMavenFormat);
 
     // Upload to Maven
-    console.log("Uploading documents to Maven...");
+    console.log("Uploading to Maven...");
     const uploadResult = await this.mavenUploader.upload(mavenDocs);
 
     result.uploaded = uploadResult.success;
@@ -108,7 +108,7 @@ export class DocsieSync {
     result.durationMs = Date.now() - startTime;
 
     console.log(
-      `Sync complete: ${result.uploaded} uploaded, ${result.failed} failed in ${result.durationMs}ms`
+      `Sync complete: ${result.uploaded} uploaded, ${result.failed} failed, ${result.skipped} skipped in ${result.durationMs}ms`
     );
 
     return result;

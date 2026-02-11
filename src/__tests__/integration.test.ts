@@ -10,7 +10,7 @@ import { DocsieClient } from "../docsie/client.js";
 import { MavenUploader } from "../maven/uploader.js";
 import { DocsieSync } from "../sync/sync.js";
 import { transformToMavenFormat } from "../maven/transform.js";
-import type { DocsieDocumentFull, DocsieWorkspace } from "../docsie/types.js";
+import type { DocsieArticle } from "../docsie/types.js";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
@@ -34,68 +34,71 @@ describe("Integration: Full Sync Flow", () => {
   });
 
   /**
-   * Generate test documents matching expected HubSync content
+   * Generate test articles matching real Docsie content structure
    */
-  function generateTestDocuments(count: number): DocsieDocumentFull[] {
+  function generateTestArticles(count: number): DocsieArticle[] {
     return Array.from({ length: count }, (_, i) => ({
-      id: `doc-${i + 1}`,
-      title: `Help Article ${i + 1}`,
-      content: `# Help Article ${i + 1}\n\nThis is the content for article ${i + 1}.\n\n## Section\n\nMore details here.`,
-      workspace_id: "ws-1",
-      project_id: "proj-1",
+      id: `art_${i + 1}`,
+      name: `Help Article ${i + 1}`,
+      description: "",
       slug: `help-article-${i + 1}`,
-      status: "published",
-      author: "support@hubsync.com",
+      doc: {
+        blocks: [
+          { type: "header-two", text: `Help Article ${i + 1}`, depth: 0, entityRanges: [], inlineStyleRanges: [] },
+          { type: "unstyled", text: `This is the content for article ${i + 1}.`, depth: 0, entityRanges: [], inlineStyleRanges: [] },
+          { type: "unstyled", text: "More details here.", depth: 0, entityRanges: [], inlineStyleRanges: [] },
+        ],
+      },
+      order: i,
       tags: ["help", "documentation"],
-      created_at: "2024-01-01T00:00:00Z",
-      updated_at: "2024-01-15T00:00:00Z",
+      template: "default",
+      updated_by: 1,
+      updators: [],
+      revision: 1,
     }));
+  }
+
+  /** Helper to create paginated response */
+  function paginated<T>(results: T[], total: number, offset: number, limit: number): object {
+    const hasNext = offset + results.length < total;
+    return {
+      count: total,
+      next: hasNext ? `https://app.docsie.io/api_v2/003/articles/?limit=${limit}&offset=${offset + limit}` : null,
+      previous: offset > 0 ? `https://app.docsie.io/api_v2/003/articles/?limit=${limit}&offset=${Math.max(0, offset - limit)}` : null,
+      results,
+    };
   }
 
   /**
    * Setup mock fetch responses for Docsie API
    */
-  function setupDocsieMocks(workspaces: DocsieWorkspace[], documents: DocsieDocumentFull[]) {
+  function setupDocsieMocks(articles: DocsieArticle[]) {
     mockFetch.mockImplementation(async (url: string) => {
       const urlStr = url.toString();
 
       // Workspaces endpoint
-      if (urlStr.includes("/workspaces") && !urlStr.includes("/documents")) {
+      if (urlStr.includes("/workspaces/")) {
         return {
           ok: true,
-          json: async () => workspaces,
+          json: async () => paginated(
+            [{ id: "workspace_abc", name: "HubSync", slug: "hubsync", shelves_count: 10, created: "2024-01-01T00:00:00Z", modified: "2024-01-01T00:00:00Z", deleted: false, owner: 1, members: [], administrators: [], editors: [], viewers: [], public: true, config: {}, domain_name: null, domain_verified: false, allowed_hosts: [], custom_links: {} }],
+            1, 0, 100
+          ),
         };
       }
 
-      // Documents list endpoint (paginated)
-      if (urlStr.includes("/documents") && urlStr.includes("page=")) {
-        const pageMatch = urlStr.match(/page=(\d+)/);
-        const page = pageMatch ? parseInt(pageMatch[1]) : 1;
-        const perPage = 100;
-        const start = (page - 1) * perPage;
-        const end = start + perPage;
-        const pageDocuments = documents.slice(start, end).map((d) => ({
-          id: d.id,
-          title: d.title,
-        }));
+      // Articles endpoint (paginated)
+      if (urlStr.includes("/articles/")) {
+        const offsetMatch = urlStr.match(/offset=(\d+)/);
+        const limitMatch = urlStr.match(/limit=(\d+)/);
+        const offset = offsetMatch ? parseInt(offsetMatch[1]) : 0;
+        const limit = limitMatch ? parseInt(limitMatch[1]) : 100;
+        const pageArticles = articles.slice(offset, offset + limit);
 
         return {
           ok: true,
-          json: async () => pageDocuments,
+          json: async () => paginated(pageArticles, articles.length, offset, limit),
         };
-      }
-
-      // Single document endpoint
-      const docMatch = urlStr.match(/\/documents\/(doc-\d+)$/);
-      if (docMatch) {
-        const docId = docMatch[1];
-        const doc = documents.find((d) => d.id === docId);
-        if (doc) {
-          return {
-            ok: true,
-            json: async () => doc,
-          };
-        }
       }
 
       return {
@@ -106,47 +109,10 @@ describe("Integration: Full Sync Flow", () => {
     });
   }
 
-  it("should sync 108 documents from Docsie to Maven", async () => {
-    // Arrange: Setup mocks for 108 documents (HubSync expected count)
-    const workspaces: DocsieWorkspace[] = [
-      { id: "ws-1", name: "HubSync Help Center" },
-    ];
-    const documents = generateTestDocuments(108);
+  it("should sync 109 articles from Docsie to Maven", async () => {
+    const articles = generateTestArticles(109);
 
-    setupDocsieMocks(workspaces, documents);
-    mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
-
-    // Create real clients with mocked fetch
-    const docsieClient = new DocsieClient({
-      apiKey: "test-api-key",
-      maxConcurrent: 100, // No rate limiting for tests
-      minTime: 0,
-    });
-
-    const uploader = new MavenUploader(mockMavenClient as any, "docsie-kb", {
-      retryConfig: { initialDelayMs: 1, backoffMultiplier: 1 },
-    });
-
-    const sync = new DocsieSync(docsieClient, uploader);
-
-    // Act
-    const result = await sync.syncAll();
-
-    // Assert
-    expect(result.workspaces).toBe(1);
-    expect(result.totalDocuments).toBe(108);
-    expect(result.uploaded).toBe(108);
-    expect(result.failed).toBe(0);
-    expect(result.errors).toHaveLength(0);
-    expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(108);
-  });
-
-  it("should transform documents correctly during sync", async () => {
-    // Arrange
-    const workspaces: DocsieWorkspace[] = [{ id: "ws-1", name: "Test" }];
-    const documents = generateTestDocuments(1);
-
-    setupDocsieMocks(workspaces, documents);
+    setupDocsieMocks(articles);
     mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
     const docsieClient = new DocsieClient({
@@ -160,105 +126,61 @@ describe("Integration: Full Sync Flow", () => {
     });
 
     const sync = new DocsieSync(docsieClient, uploader);
+    const result = await sync.syncAll();
 
-    // Act
+    expect(result.workspaces).toBe(1);
+    expect(result.articles).toBe(109);
+    expect(result.uploaded).toBe(109);
+    expect(result.failed).toBe(0);
+    expect(result.errors).toHaveLength(0);
+    expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(109);
+  });
+
+  it("should transform articles correctly during sync", async () => {
+    const articles = generateTestArticles(1);
+
+    setupDocsieMocks(articles);
+    mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
+
+    const docsieClient = new DocsieClient({
+      apiKey: "test-api-key",
+      maxConcurrent: 100,
+      minTime: 0,
+    });
+
+    const uploader = new MavenUploader(mockMavenClient as any, "docsie-kb", {
+      retryConfig: { initialDelayMs: 1, backoffMultiplier: 1 },
+    });
+
+    const sync = new DocsieSync(docsieClient, uploader);
     await sync.syncAll();
 
-    // Assert: Verify transformation was applied
     expect(mockCreateKnowledgeDocument).toHaveBeenCalledWith(
       "docsie-kb",
       expect.objectContaining({
-        knowledgeDocumentId: { referenceId: "doc-1" },
+        knowledgeDocumentId: { referenceId: "art_1" },
         contentType: "MARKDOWN",
         title: "Help Article 1",
-        content: expect.stringContaining("# Help Article 1"),
+        content: expect.stringContaining("## Help Article 1"),
         metadata: expect.objectContaining({
           source: "docsie",
-          docsie_id: "doc-1",
-          workspace_id: "ws-1",
-          project_id: "proj-1",
+          docsie_id: "art_1",
+          slug: "help-article-1",
+          tags: "help,documentation",
         }),
       })
     );
   });
 
-  it("should handle multiple workspaces", async () => {
-    // Arrange
-    const workspaces: DocsieWorkspace[] = [
-      { id: "ws-1", name: "Help Center" },
-      { id: "ws-2", name: "API Docs" },
-    ];
-
-    // Different documents for each workspace
-    const ws1Docs = generateTestDocuments(50);
-    const ws2Docs = generateTestDocuments(30).map((d, i) => ({
-      ...d,
-      id: `doc-ws2-${i + 1}`,
-      workspace_id: "ws-2",
-    }));
-
-    mockFetch.mockImplementation(async (url: string) => {
-      const urlStr = url.toString();
-
-      if (urlStr.includes("/workspaces") && !urlStr.includes("/documents")) {
-        return { ok: true, json: async () => workspaces };
-      }
-
-      if (urlStr.includes("ws-1/documents")) {
-        return { ok: true, json: async () => ws1Docs.map((d) => ({ id: d.id, title: d.title })) };
-      }
-
-      if (urlStr.includes("ws-2/documents")) {
-        return { ok: true, json: async () => ws2Docs.map((d) => ({ id: d.id, title: d.title })) };
-      }
-
-      const docMatch = urlStr.match(/\/documents\/(doc-[\w-]+)$/);
-      if (docMatch) {
-        const docId = docMatch[1];
-        const allDocs = [...ws1Docs, ...ws2Docs];
-        const doc = allDocs.find((d) => d.id === docId);
-        if (doc) {
-          return { ok: true, json: async () => doc };
-        }
-      }
-
-      return { ok: false, status: 404, statusText: "Not Found" };
-    });
-
-    mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
-
-    const docsieClient = new DocsieClient({
-      apiKey: "test-api-key",
-      maxConcurrent: 100,
-      minTime: 0,
-    });
-
-    const uploader = new MavenUploader(mockMavenClient as any, "docsie-kb", {
-      retryConfig: { initialDelayMs: 1, backoffMultiplier: 1 },
-    });
-
-    const sync = new DocsieSync(docsieClient, uploader);
-
-    // Act
-    const result = await sync.syncAll();
-
-    // Assert
-    expect(result.workspaces).toBe(2);
-    expect(result.totalDocuments).toBe(80); // 50 + 30
-    expect(result.uploaded).toBe(80);
-  });
-
   it("should handle partial failures gracefully", async () => {
-    // Arrange
-    const workspaces: DocsieWorkspace[] = [{ id: "ws-1", name: "Test" }];
-    const documents = generateTestDocuments(10);
+    const articles = generateTestArticles(10);
 
-    setupDocsieMocks(workspaces, documents);
+    setupDocsieMocks(articles);
 
-    // Fail on doc-5 (all 3 retries)
+    // Fail on art_5 (all retries)
     mockCreateKnowledgeDocument.mockImplementation(async (_kbId: string, doc: any) => {
-      if (doc.knowledgeDocumentId.referenceId === "doc-5") {
-        throw new Error("Upload failed for doc-5");
+      if (doc.knowledgeDocumentId.referenceId === "art_5") {
+        throw new Error("Upload failed for art_5");
       }
       return { success: true };
     });
@@ -274,24 +196,19 @@ describe("Integration: Full Sync Flow", () => {
     });
 
     const sync = new DocsieSync(docsieClient, uploader);
-
-    // Act
     const result = await sync.syncAll();
 
-    // Assert
-    expect(result.totalDocuments).toBe(10);
+    expect(result.articles).toBe(10);
     expect(result.uploaded).toBe(9);
     expect(result.failed).toBe(1);
     expect(result.errors).toHaveLength(1);
-    expect(result.errors[0].docId).toBe("doc-5");
+    expect(result.errors[0].docId).toBe("art_5");
   });
 
-  it("should handle pagination correctly for large document sets", async () => {
-    // Arrange: 250 documents requiring 3 pages
-    const workspaces: DocsieWorkspace[] = [{ id: "ws-1", name: "Large KB" }];
-    const documents = generateTestDocuments(250);
+  it("should handle pagination correctly for large article sets", async () => {
+    const articles = generateTestArticles(250);
 
-    setupDocsieMocks(workspaces, documents);
+    setupDocsieMocks(articles);
     mockCreateKnowledgeDocument.mockResolvedValue({ success: true });
 
     const docsieClient = new DocsieClient({
@@ -305,53 +222,48 @@ describe("Integration: Full Sync Flow", () => {
     });
 
     const sync = new DocsieSync(docsieClient, uploader);
-
-    // Act
     const result = await sync.syncAll();
 
-    // Assert
-    expect(result.totalDocuments).toBe(250);
+    expect(result.articles).toBe(250);
     expect(result.uploaded).toBe(250);
     expect(mockCreateKnowledgeDocument).toHaveBeenCalledTimes(250);
   });
 });
 
 describe("Integration: Transform Pipeline", () => {
-  it("should correctly transform Docsie document to Maven format", () => {
-    // Arrange
-    const docsieDoc: DocsieDocumentFull = {
-      id: "doc-123",
-      title: "Getting Started Guide",
-      content: "# Getting Started\n\nWelcome to our platform.",
-      workspace_id: "ws-1",
-      project_id: "proj-1",
+  it("should correctly transform Docsie article to Maven format", () => {
+    const article: DocsieArticle = {
+      id: "art_xyz",
+      name: "Getting Started Guide",
+      description: "How to get started",
       slug: "getting-started-guide",
-      status: "published",
-      author: "docs@example.com",
+      doc: {
+        blocks: [
+          { type: "header-two", text: "Getting Started", depth: 0, entityRanges: [], inlineStyleRanges: [] },
+          { type: "unstyled", text: "Welcome to our platform.", depth: 0, entityRanges: [], inlineStyleRanges: [] },
+        ],
+      },
+      order: 0,
       tags: ["tutorial", "beginner"],
-      created_at: "2024-01-01T00:00:00Z",
-      updated_at: "2024-01-15T12:30:00Z",
+      template: "default",
+      updated_by: 1,
+      updators: [],
+      revision: 2,
     };
 
-    // Act
-    const mavenDoc = transformToMavenFormat(docsieDoc);
+    const mavenDoc = transformToMavenFormat(article);
 
-    // Assert
-    expect(mavenDoc.knowledgeDocumentId.referenceId).toBe("doc-123");
+    expect(mavenDoc.knowledgeDocumentId.referenceId).toBe("art_xyz");
     expect(mavenDoc.contentType).toBe("MARKDOWN");
     expect(mavenDoc.title).toBe("Getting Started Guide");
-    expect(mavenDoc.content).toBe("# Getting Started\n\nWelcome to our platform.");
+    expect(mavenDoc.content).toContain("## Getting Started");
+    expect(mavenDoc.content).toContain("Welcome to our platform.");
     expect(mavenDoc.metadata).toEqual({
       source: "docsie",
-      docsie_id: "doc-123",
-      workspace_id: "ws-1",
-      project_id: "proj-1",
+      docsie_id: "art_xyz",
       slug: "getting-started-guide",
-      status: "published",
-      author: "docs@example.com",
       tags: "tutorial,beginner",
+      template: "default",
     });
-    expect(mavenDoc.createdAt).toEqual(new Date("2024-01-01T00:00:00Z"));
-    expect(mavenDoc.updatedAt).toEqual(new Date("2024-01-15T12:30:00Z"));
   });
 });

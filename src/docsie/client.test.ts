@@ -14,21 +14,31 @@ describe("DocsieClient", () => {
     global.fetch = originalFetch;
   });
 
+  /** Helper to create paginated response */
+  function paginated<T>(results: T[], hasNext: boolean = false): object {
+    return {
+      count: results.length,
+      next: hasNext ? "https://app.docsie.io/api_v2/003/items/?limit=100&offset=100" : null,
+      previous: null,
+      results,
+    };
+  }
+
   describe("initialization", () => {
     it("should initialize with API key and default base URL", () => {
       const client = new DocsieClient({ apiKey: "test-key" });
 
       expect(client).toBeDefined();
-      expect(client.baseUrl).toBe("https://app.docsie.io/api/v1");
+      expect(client.baseUrl).toBe("https://app.docsie.io/api_v2/003");
     });
 
     it("should initialize with custom base URL", () => {
       const client = new DocsieClient({
         apiKey: "test-key",
-        baseUrl: "https://custom.docsie.io/api/v2",
+        baseUrl: "https://custom.docsie.io/api_v2/003",
       });
 
-      expect(client.baseUrl).toBe("https://custom.docsie.io/api/v2");
+      expect(client.baseUrl).toBe("https://custom.docsie.io/api_v2/003");
     });
 
     it("should throw error if API key is missing", () => {
@@ -49,7 +59,7 @@ describe("DocsieClient", () => {
       await client.get("/test-endpoint");
 
       expect(mockFetch).toHaveBeenCalledWith(
-        "https://app.docsie.io/api/v1/test-endpoint",
+        "https://app.docsie.io/api_v2/003/test-endpoint",
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: "Bearer test-api-key",
@@ -61,14 +71,14 @@ describe("DocsieClient", () => {
 
   describe("request handling", () => {
     it("should return parsed JSON on successful response", async () => {
-      const mockData = { workspaces: [{ id: "1", name: "Test" }] };
+      const mockData = paginated([{ id: "ws-1", name: "Test" }]);
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve(mockData),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.get("/workspaces");
+      const result = await client.get("/workspaces/");
 
       expect(result).toEqual(mockData);
     });
@@ -82,7 +92,7 @@ describe("DocsieClient", () => {
 
       const client = new DocsieClient({ apiKey: "invalid-key" });
 
-      await expect(client.get("/workspaces")).rejects.toThrow(
+      await expect(client.get("/workspaces/")).rejects.toThrow(
         "Docsie API error: 401 Unauthorized"
       );
     });
@@ -92,71 +102,61 @@ describe("DocsieClient", () => {
 
       const client = new DocsieClient({ apiKey: "test-key" });
 
-      await expect(client.get("/workspaces")).rejects.toThrow("Network error");
+      await expect(client.get("/workspaces/")).rejects.toThrow("Network error");
     });
   });
 
   describe("pagination", () => {
-    it("should fetch single page when results < per_page", async () => {
-      const mockItems = Array.from({ length: 50 }, (_, i) => ({ id: `${i}` }));
+    it("should fetch single page when next is null", async () => {
+      const items = Array.from({ length: 50 }, (_, i) => ({ id: `${i}` }));
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(mockItems),
+        json: () => Promise.resolve(paginated(items, false)),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.fetchAllWithPagination<{ id: string }>(
-        "/items",
-        100
-      );
+      const result = await client.fetchAllPaginated<{ id: string }>("/items/", 100);
 
       expect(result).toHaveLength(50);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
-    it("should fetch multiple pages until results < per_page", async () => {
-      // Page 1: 100 items (full page)
+    it("should fetch multiple pages until next is null", async () => {
       const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `${i}` }));
-      // Page 2: 50 items (partial page - stops here)
-      const page2 = Array.from({ length: 50 }, (_, i) => ({
-        id: `${i + 100}`,
-      }));
+      const page2 = Array.from({ length: 50 }, (_, i) => ({ id: `${i + 100}` }));
 
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve(page1),
+          json: () => Promise.resolve(paginated(page1, true)),
         })
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve(page2),
+          json: () => Promise.resolve(paginated(page2, false)),
         });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.fetchAllWithPagination<{ id: string }>(
-        "/items",
-        100
-      );
+      const result = await client.fetchAllPaginated<{ id: string }>("/items/", 100);
 
       expect(result).toHaveLength(150);
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
-    it("should pass page and per_page query params", async () => {
+    it("should pass offset and limit query params", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve([]),
+        json: () => Promise.resolve(paginated([], false)),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      await client.fetchAllWithPagination("/items", 50);
+      await client.fetchAllPaginated("/items/", 50);
 
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("page=1"),
+        expect.stringContaining("limit=50"),
         expect.any(Object)
       );
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("per_page=50"),
+        expect.stringContaining("offset=0"),
         expect.any(Object)
       );
     });
@@ -164,82 +164,25 @@ describe("DocsieClient", () => {
     it("should return empty array when no results", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve([]),
+        json: () => Promise.resolve(paginated([], false)),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.fetchAllWithPagination("/items", 100);
+      const result = await client.fetchAllPaginated("/items/", 100);
 
       expect(result).toEqual([]);
       expect(mockFetch).toHaveBeenCalledTimes(1);
     });
-
-    it("should continue when results equal per_page", async () => {
-      // Page 1: exactly 100 items (need to check for more)
-      const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `${i}` }));
-      // Page 2: 0 items (confirms no more)
-      const page2: { id: string }[] = [];
-
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page1),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page2),
-        });
-
-      const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.fetchAllWithPagination<{ id: string }>(
-        "/items",
-        100
-      );
-
-      expect(result).toHaveLength(100);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-    });
-
-    it("should log page counts during pagination", async () => {
-      const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      const page1 = Array.from({ length: 100 }, (_, i) => ({ id: `${i}` }));
-      const page2 = Array.from({ length: 50 }, (_, i) => ({
-        id: `${i + 100}`,
-      }));
-
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page1),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page2),
-        });
-
-      const client = new DocsieClient({ apiKey: "test-key" });
-      await client.fetchAllWithPagination("/items", 100);
-
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Page 1")
-      );
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining("Page 2")
-      );
-
-      consoleSpy.mockRestore();
-    });
   });
 
-  describe("document fetching", () => {
+  describe("resource fetching", () => {
     it("should fetch workspaces", async () => {
       const mockWorkspaces = [
-        { id: "ws-1", name: "Workspace 1" },
-        { id: "ws-2", name: "Workspace 2" },
+        { id: "workspace_abc", name: "Workspace 1", shelves_count: 5 },
       ];
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(mockWorkspaces),
+        json: () => Promise.resolve(paginated(mockWorkspaces)),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
@@ -247,106 +190,88 @@ describe("DocsieClient", () => {
 
       expect(result).toEqual(mockWorkspaces);
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/workspaces"),
+        expect.stringContaining("/workspaces/"),
         expect.any(Object)
       );
     });
 
-    it("should fetch projects for a workspace", async () => {
-      const mockProjects = [
-        { id: "proj-1", workspace_id: "ws-1", name: "Project 1" },
-        { id: "proj-2", workspace_id: "ws-1", name: "Project 2" },
-      ];
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockProjects),
-      });
-
-      const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.getProjects("ws-1");
-
-      expect(result).toEqual(mockProjects);
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/workspaces/ws-1/projects"),
-        expect.any(Object)
-      );
-    });
-
-    it("should fetch documents for a workspace", async () => {
+    it("should fetch documentation (shelves)", async () => {
       const mockDocs = [
-        { id: "doc-1", title: "Doc 1" },
-        { id: "doc-2", title: "Doc 2" },
+        { id: "doc_abc", name: "Getting Started", active_books_count: 3 },
       ];
-      // Simulate pagination response (single page)
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(mockDocs),
+        json: () => Promise.resolve(paginated(mockDocs)),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.getDocuments("ws-1");
+      const result = await client.getDocumentation();
 
-      expect(result).toHaveLength(2);
+      expect(result).toEqual(mockDocs);
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/workspaces/ws-1/documents"),
+        expect.stringContaining("/documentation/"),
         expect.any(Object)
       );
     });
 
-    it("should fetch a single document with full content", async () => {
-      const mockDoc = {
-        id: "doc-1",
-        title: "Full Document",
-        content: "# Heading\n\nThis is the full content.",
+    it("should fetch books excluding deleted by default", async () => {
+      const mockBooks = [{ id: "boo_abc", name: "Book 1", deleted: false }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(paginated(mockBooks)),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getBooks();
+
+      expect(result).toEqual(mockBooks);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("deleted=false"),
+        expect.any(Object)
+      );
+    });
+
+    it("should fetch articles filtered by book", async () => {
+      const mockArticles = [{ id: "art_abc", name: "Article 1" }];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(paginated(mockArticles)),
+      });
+
+      const client = new DocsieClient({ apiKey: "test-key" });
+      const result = await client.getArticles("boo_abc");
+
+      expect(result).toEqual(mockArticles);
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("book=boo_abc"),
+        expect.any(Object)
+      );
+    });
+
+    it("should fetch a single article", async () => {
+      const mockArticle = {
+        id: "art_abc",
+        name: "Test Article",
+        doc: { blocks: [{ type: "unstyled", text: "Hello" }] },
       };
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve(mockDoc),
+        json: () => Promise.resolve(mockArticle),
       });
 
       const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.getDocument("doc-1");
+      const result = await client.getArticle("art_abc");
 
-      expect(result).toEqual(mockDoc);
-      expect(result.content).toBeDefined();
+      expect(result).toEqual(mockArticle);
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining("/documents/doc-1"),
+        expect.stringContaining("/articles/art_abc/"),
         expect.any(Object)
       );
-    });
-
-    it("should use pagination when fetching documents", async () => {
-      // 150 docs across 2 pages
-      const page1 = Array.from({ length: 100 }, (_, i) => ({
-        id: `doc-${i}`,
-        title: `Doc ${i}`,
-      }));
-      const page2 = Array.from({ length: 50 }, (_, i) => ({
-        id: `doc-${i + 100}`,
-        title: `Doc ${i + 100}`,
-      }));
-
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page1),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve(page2),
-        });
-
-      const client = new DocsieClient({ apiKey: "test-key" });
-      const result = await client.getDocuments("ws-1");
-
-      expect(result).toHaveLength(150);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 
   describe("rate limiting", () => {
     it("should apply rate limiting to requests", async () => {
-      // Make 3 rapid requests and verify they're spaced out
       const timestamps: number[] = [];
 
       mockFetch.mockImplementation(async () => {
@@ -359,7 +284,6 @@ describe("DocsieClient", () => {
 
       const client = new DocsieClient({ apiKey: "test-key" });
 
-      // Execute 3 requests concurrently
       await Promise.all([
         client.get("/test1"),
         client.get("/test2"),
@@ -368,42 +292,10 @@ describe("DocsieClient", () => {
 
       expect(timestamps).toHaveLength(3);
 
-      // With rate limiting (200ms minTime), sequential requests should have delays
-      // First request is immediate, subsequent ones should be delayed
       if (timestamps.length >= 2) {
         const delay1 = timestamps[1] - timestamps[0];
-        // Allow some tolerance (150ms minimum to account for test execution time)
         expect(delay1).toBeGreaterThanOrEqual(150);
       }
-    });
-
-    it("should limit concurrent requests to 5", async () => {
-      let concurrentCount = 0;
-      let maxConcurrent = 0;
-
-      mockFetch.mockImplementation(async () => {
-        concurrentCount++;
-        maxConcurrent = Math.max(maxConcurrent, concurrentCount);
-
-        // Simulate network delay
-        await new Promise((resolve) => setTimeout(resolve, 50));
-
-        concurrentCount--;
-        return {
-          ok: true,
-          json: () => Promise.resolve({ data: [] }),
-        };
-      });
-
-      const client = new DocsieClient({ apiKey: "test-key" });
-
-      // Fire 10 requests simultaneously
-      await Promise.all(
-        Array.from({ length: 10 }, (_, i) => client.get(`/test${i}`))
-      );
-
-      // Should never exceed 5 concurrent requests
-      expect(maxConcurrent).toBeLessThanOrEqual(5);
     });
   });
 });

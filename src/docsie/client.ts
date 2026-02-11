@@ -2,14 +2,16 @@
  * Docsie API Client
  *
  * Handles authentication and HTTP requests to the Docsie API.
+ * Uses /api_v2/003/ endpoints with Bearer token auth.
  */
 
 import Bottleneck from "bottleneck";
 import type {
+  PaginatedResponse,
   DocsieWorkspace,
-  DocsieProject,
-  DocsieDocument,
-  DocsieDocumentFull,
+  DocsieDocumentation,
+  DocsieBook,
+  DocsieArticle,
 } from "./types.js";
 
 export interface DocsieClientConfig {
@@ -21,7 +23,7 @@ export interface DocsieClientConfig {
   minTime?: number;
 }
 
-const DEFAULT_BASE_URL = "https://app.docsie.io/api/v1";
+const DEFAULT_BASE_URL = "https://app.docsie.io/api_v2/003";
 const DEFAULT_MAX_CONCURRENT = 5;
 const DEFAULT_MIN_TIME = 200;
 
@@ -38,7 +40,6 @@ export class DocsieClient {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
 
-    // Configure rate limiter per KB best practices
     this.limiter = new Bottleneck({
       maxConcurrent: config.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
       minTime: config.minTime ?? DEFAULT_MIN_TIME,
@@ -53,7 +54,7 @@ export class DocsieClient {
   }
 
   /**
-   * Internal fetch with authentication (not rate limited)
+   * Internal fetch with authentication
    */
   private async fetchWithAuth<T>(endpoint: string): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
@@ -68,7 +69,7 @@ export class DocsieClient {
 
     if (!response.ok) {
       throw new Error(
-        `Docsie API error: ${response.status} ${response.statusText}`
+        `Docsie API error: ${response.status} ${response.statusText} for ${endpoint}`
       );
     }
 
@@ -76,33 +77,30 @@ export class DocsieClient {
   }
 
   /**
-   * Fetch all items from a paginated endpoint
+   * Fetch all items from a paginated endpoint using offset/limit
    *
-   * Follows KB best practices: continues fetching until results < per_page
+   * Docsie returns { count, next, previous, results } for all list endpoints.
    */
-  async fetchAllWithPagination<T>(
+  async fetchAllPaginated<T>(
     endpoint: string,
-    perPage: number = 100
+    limit: number = 100
   ): Promise<T[]> {
     const allItems: T[] = [];
-    let page = 1;
+    let offset = 0;
     let hasMore = true;
 
     while (hasMore) {
       const separator = endpoint.includes("?") ? "&" : "?";
-      const paginatedEndpoint = `${endpoint}${separator}page=${page}&per_page=${perPage}`;
+      const paginatedEndpoint = `${endpoint}${separator}limit=${limit}&offset=${offset}`;
 
-      const items = await this.get<T[]>(paginatedEndpoint);
+      const response = await this.get<PaginatedResponse<T>>(paginatedEndpoint);
 
-      console.log(`Page ${page}: fetched ${items.length} items`);
+      allItems.push(...response.results);
 
-      allItems.push(...items);
-
-      // Stop when we get fewer results than requested (no more pages)
-      if (items.length < perPage) {
+      if (response.next === null || response.results.length < limit) {
         hasMore = false;
       } else {
-        page++;
+        offset += limit;
       }
     }
 
@@ -113,29 +111,36 @@ export class DocsieClient {
    * Fetch all workspaces
    */
   async getWorkspaces(): Promise<DocsieWorkspace[]> {
-    return this.get<DocsieWorkspace[]>("/workspaces");
+    return this.fetchAllPaginated<DocsieWorkspace>("/workspaces/");
   }
 
   /**
-   * Fetch projects for a workspace
+   * Fetch all documentation (shelves)
    */
-  async getProjects(workspaceId: string): Promise<DocsieProject[]> {
-    return this.get<DocsieProject[]>(`/workspaces/${workspaceId}/projects`);
+  async getDocumentation(): Promise<DocsieDocumentation[]> {
+    return this.fetchAllPaginated<DocsieDocumentation>("/documentation/");
   }
 
   /**
-   * Fetch all documents for a workspace (with pagination)
+   * Fetch all books, optionally filtering out deleted
    */
-  async getDocuments(workspaceId: string): Promise<DocsieDocument[]> {
-    return this.fetchAllWithPagination<DocsieDocument>(
-      `/workspaces/${workspaceId}/documents`
-    );
+  async getBooks(includeDeleted: boolean = false): Promise<DocsieBook[]> {
+    const endpoint = includeDeleted ? "/books/" : "/books/?deleted=false";
+    return this.fetchAllPaginated<DocsieBook>(endpoint);
   }
 
   /**
-   * Fetch a single document with full content
+   * Fetch all articles, optionally filtered by book
    */
-  async getDocument(documentId: string): Promise<DocsieDocumentFull> {
-    return this.get<DocsieDocumentFull>(`/documents/${documentId}`);
+  async getArticles(bookId?: string): Promise<DocsieArticle[]> {
+    const endpoint = bookId ? `/articles/?book=${bookId}` : "/articles/";
+    return this.fetchAllPaginated<DocsieArticle>(endpoint);
+  }
+
+  /**
+   * Fetch a single article by ID
+   */
+  async getArticle(articleId: string): Promise<DocsieArticle> {
+    return this.get<DocsieArticle>(`/articles/${articleId}/`);
   }
 }

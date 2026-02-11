@@ -1,15 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { DocsieSync } from "./sync.js";
-import type { DocsieDocumentFull } from "../docsie/types.js";
+import type { DocsieArticle } from "../docsie/types.js";
 
 // Mock DocsieClient
 const mockGetWorkspaces = vi.fn();
-const mockGetDocuments = vi.fn();
-const mockGetDocument = vi.fn();
+const mockGetArticles = vi.fn();
 const mockDocsieClient = {
   getWorkspaces: mockGetWorkspaces,
-  getDocuments: mockGetDocuments,
-  getDocument: mockGetDocument,
+  getArticles: mockGetArticles,
 };
 
 // Mock MavenUploader
@@ -21,35 +19,35 @@ const mockMavenUploader = {
 describe("DocsieSync", () => {
   beforeEach(() => {
     mockGetWorkspaces.mockReset();
-    mockGetDocuments.mockReset();
-    mockGetDocument.mockReset();
+    mockGetArticles.mockReset();
     mockUpload.mockReset();
     vi.spyOn(console, "log").mockImplementation(() => {});
   });
 
-  const createTestDoc = (id: string): DocsieDocumentFull => ({
+  const createTestArticle = (id: string, hasContent: boolean = true): DocsieArticle => ({
     id,
-    title: `Document ${id}`,
-    content: `Content for ${id}`,
-    created_at: "2024-01-01T00:00:00Z",
-    updated_at: "2024-01-02T00:00:00Z",
+    name: `Article ${id}`,
+    description: "",
+    slug: `article-${id}`,
+    doc: {
+      blocks: hasContent
+        ? [{ type: "unstyled", text: `Content for ${id}`, depth: 0, entityRanges: [], inlineStyleRanges: [] }]
+        : [],
+    },
+    order: 0,
+    tags: [],
+    template: "default",
+    updated_by: 1,
+    updators: [],
+    revision: 1,
   });
 
   describe("syncAll", () => {
-    it("should sync documents from Docsie to Maven successfully", async () => {
-      // Arrange
-      const workspace = { id: "ws-1", name: "Test Workspace" };
-      const docs = [
-        { id: "doc-1", title: "Doc 1" },
-        { id: "doc-2", title: "Doc 2" },
-      ];
-      const fullDocs = [createTestDoc("doc-1"), createTestDoc("doc-2")];
+    it("should sync articles from Docsie to Maven successfully", async () => {
+      const articles = [createTestArticle("art_1"), createTestArticle("art_2")];
 
-      mockGetWorkspaces.mockResolvedValue([workspace]);
-      mockGetDocuments.mockResolvedValue(docs);
-      mockGetDocument
-        .mockResolvedValueOnce(fullDocs[0])
-        .mockResolvedValueOnce(fullDocs[1]);
+      mockGetWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Test" }]);
+      mockGetArticles.mockResolvedValue(articles);
       mockUpload.mockResolvedValue({
         total: 2,
         success: 2,
@@ -57,39 +55,26 @@ describe("DocsieSync", () => {
         errors: [],
       });
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
-      // Act
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
-      // Assert
-      expect(result.totalDocuments).toBe(2);
+      expect(result.articles).toBe(2);
       expect(result.uploaded).toBe(2);
       expect(result.failed).toBe(0);
       expect(mockGetWorkspaces).toHaveBeenCalledTimes(1);
-      expect(mockGetDocuments).toHaveBeenCalledWith("ws-1");
-      expect(mockGetDocument).toHaveBeenCalledTimes(2);
+      expect(mockGetArticles).toHaveBeenCalledTimes(1);
       expect(mockUpload).toHaveBeenCalledTimes(1);
     });
 
-    it("should sync documents from multiple workspaces", async () => {
-      const workspaces = [
-        { id: "ws-1", name: "Workspace 1" },
-        { id: "ws-2", name: "Workspace 2" },
+    it("should skip articles with no content", async () => {
+      const articles = [
+        createTestArticle("art_1", true),
+        createTestArticle("art_2", false), // empty
+        createTestArticle("art_3", true),
       ];
-      const docs1 = [{ id: "doc-1", title: "Doc 1" }];
-      const docs2 = [{ id: "doc-2", title: "Doc 2" }];
 
-      mockGetWorkspaces.mockResolvedValue(workspaces);
-      mockGetDocuments
-        .mockResolvedValueOnce(docs1)
-        .mockResolvedValueOnce(docs2);
-      mockGetDocument
-        .mockResolvedValueOnce(createTestDoc("doc-1"))
-        .mockResolvedValueOnce(createTestDoc("doc-2"));
+      mockGetWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Test" }]);
+      mockGetArticles.mockResolvedValue(articles);
       mockUpload.mockResolvedValue({
         total: 2,
         success: 2,
@@ -97,30 +82,22 @@ describe("DocsieSync", () => {
         errors: [],
       });
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
-      expect(result.totalDocuments).toBe(2);
-      expect(mockGetDocuments).toHaveBeenCalledWith("ws-1");
-      expect(mockGetDocuments).toHaveBeenCalledWith("ws-2");
+      expect(result.articles).toBe(2);
+      expect(result.skipped).toBe(1);
+      expect(result.uploaded).toBe(2);
     });
 
-    it("should handle empty document list", async () => {
+    it("should handle empty article list", async () => {
       mockGetWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Empty" }]);
-      mockGetDocuments.mockResolvedValue([]);
+      mockGetArticles.mockResolvedValue([]);
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
-      expect(result.totalDocuments).toBe(0);
+      expect(result.articles).toBe(0);
       expect(result.uploaded).toBe(0);
       expect(result.failed).toBe(0);
       expect(mockUpload).not.toHaveBeenCalled();
@@ -128,62 +105,45 @@ describe("DocsieSync", () => {
 
     it("should handle no workspaces", async () => {
       mockGetWorkspaces.mockResolvedValue([]);
+      mockGetArticles.mockResolvedValue([]);
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
-      expect(result.totalDocuments).toBe(0);
-      expect(result.uploaded).toBe(0);
-      expect(mockGetDocuments).not.toHaveBeenCalled();
+      expect(result.workspaces).toBe(0);
     });
 
     it("should report partial failures from upload", async () => {
-      const workspace = { id: "ws-1", name: "Test" };
-      const docs = [
-        { id: "doc-1", title: "Doc 1" },
-        { id: "doc-2", title: "Doc 2" },
-        { id: "doc-3", title: "Doc 3" },
+      const articles = [
+        createTestArticle("art_1"),
+        createTestArticle("art_2"),
+        createTestArticle("art_3"),
       ];
 
-      mockGetWorkspaces.mockResolvedValue([workspace]);
-      mockGetDocuments.mockResolvedValue(docs);
-      mockGetDocument
-        .mockResolvedValueOnce(createTestDoc("doc-1"))
-        .mockResolvedValueOnce(createTestDoc("doc-2"))
-        .mockResolvedValueOnce(createTestDoc("doc-3"));
+      mockGetWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Test" }]);
+      mockGetArticles.mockResolvedValue(articles);
       mockUpload.mockResolvedValue({
         total: 3,
         success: 2,
         failed: 1,
-        errors: [{ docId: "doc-2", error: "Upload failed" }],
+        errors: [{ docId: "art_2", error: "Upload failed" }],
       });
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
-      expect(result.totalDocuments).toBe(3);
+      expect(result.articles).toBe(3);
       expect(result.uploaded).toBe(2);
       expect(result.failed).toBe(1);
       expect(result.errors).toHaveLength(1);
-      expect(result.errors[0].docId).toBe("doc-2");
+      expect(result.errors[0].docId).toBe("art_2");
     });
 
-    it("should transform documents to Maven format before upload", async () => {
-      const workspace = { id: "ws-1", name: "Test" };
-      const doc = { id: "doc-1", title: "Doc 1" };
-      const fullDoc = createTestDoc("doc-1");
+    it("should transform articles to Maven format before upload", async () => {
+      const articles = [createTestArticle("art_1")];
 
-      mockGetWorkspaces.mockResolvedValue([workspace]);
-      mockGetDocuments.mockResolvedValue([doc]);
-      mockGetDocument.mockResolvedValue(fullDoc);
+      mockGetWorkspaces.mockResolvedValue([{ id: "ws-1", name: "Test" }]);
+      mockGetArticles.mockResolvedValue(articles);
       mockUpload.mockResolvedValue({
         total: 1,
         success: 1,
@@ -191,21 +151,16 @@ describe("DocsieSync", () => {
         errors: [],
       });
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       await sync.syncAll();
 
-      // Verify upload was called with transformed documents
       expect(mockUpload).toHaveBeenCalledWith(
         expect.arrayContaining([
           expect.objectContaining({
-            knowledgeDocumentId: { referenceId: "doc-1" },
+            knowledgeDocumentId: { referenceId: "art_1" },
             contentType: "MARKDOWN",
-            title: "Document doc-1",
-            content: "Content for doc-1",
+            title: "Article art_1",
+            content: expect.stringContaining("Content for art_1"),
           }),
         ])
       );
@@ -214,19 +169,13 @@ describe("DocsieSync", () => {
 
   describe("syncResult", () => {
     it("should include workspaces count in result", async () => {
-      const workspaces = [
+      mockGetWorkspaces.mockResolvedValue([
         { id: "ws-1", name: "W1" },
         { id: "ws-2", name: "W2" },
-      ];
+      ]);
+      mockGetArticles.mockResolvedValue([]);
 
-      mockGetWorkspaces.mockResolvedValue(workspaces);
-      mockGetDocuments.mockResolvedValue([]);
-
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
       expect(result.workspaces).toBe(2);
@@ -234,12 +183,9 @@ describe("DocsieSync", () => {
 
     it("should include duration in result", async () => {
       mockGetWorkspaces.mockResolvedValue([]);
+      mockGetArticles.mockResolvedValue([]);
 
-      const sync = new DocsieSync(
-        mockDocsieClient as any,
-        mockMavenUploader as any
-      );
-
+      const sync = new DocsieSync(mockDocsieClient as any, mockMavenUploader as any);
       const result = await sync.syncAll();
 
       expect(result.durationMs).toBeGreaterThanOrEqual(0);

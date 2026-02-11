@@ -11,7 +11,9 @@ import type { MavenAGIClient } from "mavenagi";
 export interface DocsieValidationResult {
   success: boolean;
   workspaces?: number;
-  documents?: number;
+  documentation?: number;
+  books?: number;
+  articles?: number;
   error?: string;
 }
 
@@ -30,8 +32,8 @@ export interface ValidationResult {
 }
 
 export interface ValidationOptions {
-  /** Expected document count (for verification) */
-  expectedDocumentCount?: number;
+  /** Expected article count (for verification) */
+  expectedArticleCount?: number;
 }
 
 /**
@@ -43,24 +45,28 @@ export async function validateDocsieConnection(
   try {
     console.log("Validating Docsie connection...");
 
-    // Test auth by fetching workspaces
     const workspaces = await client.getWorkspaces();
     console.log(`Found ${workspaces.length} workspace(s)`);
 
-    // Count documents across all workspaces
-    let totalDocuments = 0;
-    for (const workspace of workspaces) {
-      const docs = await client.getDocuments(workspace.id);
-      totalDocuments += docs.length;
-      console.log(`  ${workspace.name}: ${docs.length} document(s)`);
+    for (const ws of workspaces) {
+      console.log(`  ${ws.name} (${ws.id}) - ${ws.shelves_count} shelves`);
     }
 
-    console.log(`Total documents: ${totalDocuments}`);
+    const documentation = await client.getDocumentation();
+    console.log(`Found ${documentation.length} documentation/shelves`);
+
+    const books = await client.getBooks();
+    console.log(`Found ${books.length} non-deleted books`);
+
+    const articles = await client.getArticles();
+    console.log(`Found ${articles.length} articles`);
 
     return {
       success: true,
       workspaces: workspaces.length,
-      documents: totalDocuments,
+      documentation: documentation.length,
+      books: books.length,
+      articles: articles.length,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -82,7 +88,6 @@ export async function validateMavenConnection(
   try {
     console.log("Validating Maven connection...");
 
-    // Test auth by fetching knowledge base
     const kb = await client.knowledge.getKnowledgeBase(knowledgeBaseId);
     console.log(`Knowledge base: ${kb.name}`);
 
@@ -111,24 +116,20 @@ export async function runValidation(
 ): Promise<ValidationResult> {
   console.log("=== Running Pre-Sync Validation ===\n");
 
-  // Validate Docsie
   const docsie = await validateDocsieConnection(docsieClient);
 
   console.log("");
 
-  // Validate Maven
   const maven = await validateMavenConnection(mavenClient, knowledgeBaseId);
 
-  // Check if ready to sync
   const ready = docsie.success && maven.success;
 
-  // Compare document count if expected count provided
   let countMismatch: boolean | undefined;
-  if (options.expectedDocumentCount !== undefined && docsie.documents !== undefined) {
-    countMismatch = docsie.documents !== options.expectedDocumentCount;
+  if (options.expectedArticleCount !== undefined && docsie.articles !== undefined) {
+    countMismatch = docsie.articles !== options.expectedArticleCount;
     if (countMismatch) {
       console.log(
-        `\nWarning: Expected ${options.expectedDocumentCount} documents, found ${docsie.documents}`
+        `\nWarning: Expected ${options.expectedArticleCount} articles, found ${docsie.articles}`
       );
     }
   }
@@ -142,7 +143,7 @@ export async function runValidation(
     docsie,
     maven,
     ready,
-    expectedCount: options.expectedDocumentCount,
+    expectedCount: options.expectedArticleCount,
     countMismatch,
   };
 }

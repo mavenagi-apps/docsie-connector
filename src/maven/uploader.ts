@@ -85,8 +85,6 @@ export class MavenUploader {
                   title: doc.title,
                   content: doc.content,
                   metadata: doc.metadata,
-                  createdAt: doc.createdAt,
-                  updatedAt: doc.updatedAt,
                 }
               ),
             {

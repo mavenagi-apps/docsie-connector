@@ -98,7 +98,7 @@ describe("getConfig", () => {
 
     const config = getConfig();
 
-    expect(config.docsie.baseUrl).toBe("https://app.docsie.io/api/v1");
+    expect(config.docsie.baseUrl).toBe("https://app.docsie.io/api_v2/003");
   });
 
   it("should throw when required env vars are missing", () => {

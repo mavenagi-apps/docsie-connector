@@ -1,8 +1,9 @@
 /**
- * Transform Docsie documents to Maven knowledge format
+ * Transform Docsie articles to Maven knowledge format
  */
 
-import type { DocsieDocumentFull } from "../docsie/types.js";
+import type { DocsieArticle } from "../docsie/types.js";
+import { docToMarkdown } from "../docsie/content.js";
 
 /**
  * Maven Knowledge Document Request structure
@@ -16,61 +17,41 @@ export interface MavenKnowledgeDocument {
   title: string;
   content: string;
   metadata?: Record<string, string>;
-  createdAt?: Date;
-  updatedAt?: Date;
 }
 
 /**
- * Transform a Docsie document to Maven knowledge format
+ * Transform a Docsie article to Maven knowledge format
  *
- * Uses the Docsie document ID as the referenceId for deduplication.
- * This ensures that re-syncing the same document updates rather than duplicates.
+ * Uses the article ID as the referenceId for deduplication.
+ * Converts Draft.js block content to Markdown.
  */
 export function transformToMavenFormat(
-  doc: DocsieDocumentFull
+  article: DocsieArticle
 ): MavenKnowledgeDocument {
   const metadata: Record<string, string> = {
     source: "docsie",
-    docsie_id: doc.id,
+    docsie_id: article.id,
   };
 
-  // Add optional metadata fields
-  if (doc.workspace_id) {
-    metadata.workspace_id = doc.workspace_id;
+  if (article.tags && article.tags.length > 0) {
+    metadata.tags = article.tags.join(",");
   }
-  if (doc.project_id) {
-    metadata.project_id = doc.project_id;
+  if (article.slug) {
+    metadata.slug = article.slug;
   }
-  if (doc.tags && doc.tags.length > 0) {
-    metadata.tags = doc.tags.join(",");
-  }
-  if (doc.author) {
-    metadata.author = doc.author;
-  }
-  if (doc.slug) {
-    metadata.slug = doc.slug;
-  }
-  if (doc.status) {
-    metadata.status = doc.status;
+  if (article.template) {
+    metadata.template = article.template;
   }
 
-  const result: MavenKnowledgeDocument = {
+  const content = docToMarkdown(article.doc);
+
+  return {
     knowledgeDocumentId: {
-      referenceId: doc.id,
+      referenceId: article.id,
     },
     contentType: "MARKDOWN",
-    title: doc.title,
-    content: doc.content,
+    title: article.name,
+    content: content || article.name,
     metadata,
   };
-
-  // Add timestamps if present
-  if (doc.created_at) {
-    result.createdAt = new Date(doc.created_at);
-  }
-  if (doc.updated_at) {
-    result.updatedAt = new Date(doc.updated_at);
-  }
-
-  return result;
 }
